@@ -1,5 +1,128 @@
 #include "minispark.h"
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
+
+/*
+ * Function for the list
+*/
+
+List* list_init(int n) {
+  List* list = (List*)malloc(sizeof(List));
+  if (list == NULL) {
+    fprintf(stderr, "Failed to allocate memory for list.\n");
+    exit(EXIT_FAILURE);
+  }
+  list->data = (void**)malloc(sizeof(void*)*n);
+  if (!list->data) {
+    fprintf(stderr, "Failed to allocate memory for list data.\n");
+    free(list);
+    exit(EXIT_FAILURE);
+  }
+  list->size = 0;
+  list->capacity = n;
+  return list;
+}
+
+void list_add_elem(List* list, void* elem) {
+  if (list->size == list->capacity) {
+    list->capacity *= 2;
+    void** new_data = (void**)realloc(list->data, list->capacity * sizeof(void*));
+    if (!new_data) {
+      fprintf(stderr, "Failed to allocate memory for list data.\n");
+      exit(EXIT_FAILURE);
+    }
+    list->data = new_data;
+  }
+  list->data[list->size] = elem;
+  list->size++;
+}
+
+void list_free(List* list) {
+  if (list) {
+    free(list->data);
+    free(list);
+  }
+}
+
+void* list_get(List* list, int index) {
+  if (index < 0 || index >= list->size) {
+    return NULL;
+  }
+   return list->data[index];
+}
+
+/*
+ * TaskQueue
+ */
+
+TaskQueue* taskqueue_init() {
+  TaskQueue* q = (TaskQueue*)malloc(sizeof(TaskQueue));
+  q->head = q->tail = NULL;
+  pthread_mutex_init(&(q->mutex), NULL);
+  pthread_cond_init(&(q->not_empty), NULL);
+  q->shutdown = false;
+  return q;
+}
+
+void taskqueue_enqueue(TaskQueue* q, Task* task) {
+  TaskNode* node = (TaskNode*)malloc(sizeof(TaskNode));
+  node->task = task;
+  node->next = NULL;
+
+  pthread_mutex_lock(&(q->mutex));
+  if (q->tail) {
+    q->tail->next = node;
+    q->tail = node;
+  } else {
+    q->head = q->tail = node;
+  }
+  pthread_cond_signal(&(q->not_empty));
+  pthread_mutex_unlock(&(q->mutex));
+}
+
+Task* taskqueue_dequeue(TaskQueue* q) {
+  pthread_mutex_lock(&(q->mutex));
+  while (!(q->head) && !(q->shutdown)) {
+    pthread_cond_wait(&(q->not_empty), &(q->mutex));
+  }
+
+  if (q->shutdown && !q->head) {
+    pthread_mutex_unlock(&(q->mutex));
+    return NULL;
+  }
+
+  TaskNode* node = q->head;
+  q->head = node->next;
+  if (!q->head) q->tail = NULL;
+
+  Task* task = node->task;
+  free(node);
+  pthread_mutex_unlock(&(q->mutex));
+  return task;
+}
+
+void taskqueue_destroy(TaskQueue* q) {
+  pthread_mutex_lock(&(q->mutex));
+  q->shutdown = true;
+  pthread_cond_signal(&(q->not_empty));
+  pthread_mutex_unlock(&(q->mutex));
+
+  TaskNode* node = q->head;
+  while (node) {
+    TaskNode* temp = node;
+    node = node->next;
+    free(temp->task);
+    free(temp);
+  }
+
+  pthread_mutex_destroy(&(q->mutex));
+  pthread_cond_destroy(&(q->not_empty));
+  free(q);
+}
+
+
 // Working with metrics...
 // Recording the current time in a `struct timespec`:
 //    clock_gettime(CLOCK_MONOTONIC, &metric->created);
@@ -99,6 +222,8 @@ RDD *RDDFromFiles(char **filenames, int numfiles)
     list_add_elem(rdd->partitions, fp);
   }
 
+  rdd->filebacked = true;
+  rdd->numpartitions = numfiles;
   rdd->numdependencies = 0;
   rdd->trans = MAP;
   rdd->fn = (void *)identity;
@@ -106,7 +231,42 @@ RDD *RDDFromFiles(char **filenames, int numfiles)
 }
 
 void execute(RDD* rdd) {
-  return;
+  if (rdd->is_materialized) return;
+
+  if (rdd->filebacked) {
+    rdd->is_materialized = true;
+    return;
+  }
+
+  for (int i = 0; i < rdd->numdependencies; i++) {
+    execute(rdd->dependencies[i]);
+  }
+
+  if (!rdd->partitions) {
+    rdd->partitions = list_init(4);
+    // for (int i = 0; i < rdd->numpartitions; i++) {
+    //   list_add_elem(rdd->partitions, NULL);
+    // }
+  }
+
+  switch (rdd->trans) {
+    case MAP: {
+     for(int p = 0; p < rdd->dependencies[0]->partitions->size; p++) {
+        List* dep = list_get(rdd->dependencies[0]->partitions, p);
+        void* e;
+        for (int d = 0; d < dep->size; d++) {
+          e =  dep->data[d];
+          void* r = ((Mapper)rdd->fn)(e);
+          if (r) list_add_elem(rdd->partitions, r);
+        }
+     }
+     rdd->is_materialized = true;
+    }
+      break;
+    default:
+      break;
+  }
+  // rdd->is_materialized = true;
 }
 
 void MS_Run() {
@@ -117,12 +277,13 @@ void MS_TearDown() {
   return;
 }
 
+// TODO: implement count
 int count(RDD *rdd) {
   execute(rdd);
 
   int count = 0;
   // count all the items in rdd
-  return count;
+  return rdd->numpartitions;
 }
 
 void print(RDD *rdd, Printer p) {
@@ -130,4 +291,14 @@ void print(RDD *rdd, Printer p) {
 
   // print all the items in rdd
   // aka... `p(item)` for all items in rdd
+  for (int i = 0; i < rdd->numpartitions; i++) {
+    List* partition = list_get(rdd->partitions, i);
+    if (partition) {
+      void* elem;
+      for (int i = 0; i < partition->size; i++) {
+        elem = partition->data[i];
+        p(elem);
+      }
+    }
+  }
 }

@@ -2,6 +2,7 @@
 #define __minispark_h__
 
 #include <pthread.h>
+#include <stdbool.h>
 
 #define MAXDEPS (2)
 #define TIME_DIFF_MICROS(start, end) \
@@ -13,6 +14,18 @@ struct List;
 typedef struct RDD RDD; // forward decl. of struct RDD
 typedef struct List List; // forward decl. of List.
 // Minimally, we assume "list_add_elem(List *l, void*)"
+
+struct List {
+  void** data;
+  int size;
+  int capacity;
+};
+
+// Functions for the list
+List* list_init(int n);
+void list_add_elem(List* list, void* elem);
+void list_free(List* list);
+
 
 // Different function pointer types used by minispark
 typedef void* (*Mapper)(void* arg);
@@ -34,11 +47,14 @@ struct RDD {
   void* fn; // transformation function
   void* ctx; // used by minispark lib functions
   List* partitions; // list of partitions
+  int numpartitions; // number of partitions
   
   RDD* dependencies[MAXDEPS];
   int numdependencies; // 0, 1, or 2
 
   // you may want extra data members here
+  bool is_materialized;
+  bool filebacked;
 };
 
 typedef struct {
@@ -54,6 +70,24 @@ typedef struct {
   int pnum;
   TaskMetric* metric;
 } Task;
+
+typedef struct TaskNode{
+  Task* task;
+  struct TaskNode* next;
+} TaskNode;
+
+typedef struct {
+  TaskNode* head;
+  TaskNode* tail;
+  pthread_mutex_t mutex;
+  pthread_cond_t not_empty;
+  bool shutdown;
+} TaskQueue;
+
+TaskQueue* taskqueue_init();
+void taskqueue_enqueue(TaskQueue* q, Task* task);
+Task* taskqueue_dequeue(TaskQueue* q);
+void taskqueue_destroy(TaskQueue* q);
 
 //////// actions ////////
 

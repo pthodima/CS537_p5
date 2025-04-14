@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="1.c" type="CppFileRunConfiguration" factoryName="CppFileRunConfiguration" PROGRAM_PARAMS="../test_files/one.txt" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/tests/tests" PASS_PARENT_ENVS_2="true" PROJECT_NAME="p5" TARGET_NAME="1.c" CONFIG_NAME="1.c">
+    <option name="compilerOptions" value="-Wall -Wextra -Og -g -pthread -I../../solution -I../../lib ../../solution/minispark.o ../../lib/lib.o" />
+    <option name="sourceFile" value="tests/tests/1.c" />
+    <method v="2" />
+  </configuration>
+</component>
